@@ -77,9 +77,19 @@ class ManagementAPI:
             method=method,
             headers={"Authorization": self.authorization, "Content-Type": "application/json"},
         )
-        with self.opener.open(request, timeout=5) as response:
-            data = response.read()
-            return json.loads(data) if data else None
+        try:
+            with self.opener.open(request, timeout=5) as response:
+                data = response.read()
+                return json.loads(data) if data else None
+        except urllib.error.HTTPError as exc:
+            allowed = exc.headers.get("Allow")
+            detail = f"{method} /api{path}: HTTP {exc.code} {exc.reason}"
+            if allowed:
+                detail += f"; allowed methods: {allowed}"
+            exc.close()
+            # URLError сохраняет retry временного 404 в wait(). В диагностике
+            # достаточно метода/пути/статуса; credentials и тело не выводятся.
+            raise urllib.error.URLError(detail) from exc
 
     def wait(self, path: str, predicate=lambda response: bool(response), timeout: int = 60):
         deadline = time.monotonic() + timeout
@@ -161,8 +171,10 @@ def run(negative_control: bool) -> None:
             queue_path = f"/queues/{vhost}/{queue}"
             payload = json.dumps({"event_id": event_id, "cycle": 0}, sort_keys=True)
             api.request("PUT", queue_path, {"durable": True, "auto_delete": False, "arguments": {}})
+            # RabbitMQ management handler разрешает POST для публикации;
+            # PUT создаёт очередь/обменник, но на /publish возвращает 405.
             published = api.request(
-                "PUT",
+                "POST",
                 f"/exchanges/{vhost}/amq.default/publish",
                 {
                     "properties": {"delivery_mode": 2, "message_id": event_id},
