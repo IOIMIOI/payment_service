@@ -1,0 +1,21 @@
+name: Tests
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify RabbitMQ message persistence across container recreation
+        run: python3 scripts/check_rabbitmq_persistence.py
+      - name: Run tests with PostgreSQL and RabbitMQ
+        run: docker compose --profile test run --build --rm tests
+      - name: Show service logs after failure
+        if: failure()
+        run: docker compose logs
+      - name: Stop test stack
+        if: always()
+        run: docker compose --profile test down --volumes

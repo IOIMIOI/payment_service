@@ -1,0 +1,14 @@
+{
+  "amount": "100.00",
+  "currency": "RUB",
+  "description": "Changed order smoke-001",
+  "metadata": {
+    "order_id": "smoke-001",
+    "customer": {
+      "id": 42,
+      "channel": "web"
+    },
+    "tags": ["test", "api"]
+  },
+  "webhook_url": "http://webhook-sink:8002/webhooks"
+}

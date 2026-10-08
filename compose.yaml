@@ -1,0 +1,124 @@
+x-app: &app
+  build:
+    context: .
+    target: runtime
+  environment: &environment
+    DATABASE_URL: postgresql+asyncpg://payments:payments@postgres:5432/payments
+    RABBITMQ_URL: amqp://payments:payments@rabbitmq:5672/
+    API_KEY: ${API_KEY:-dev-api-key}
+    PROVIDER_URL: http://provider:8001
+    PROVIDER_API_KEY: ${PROVIDER_API_KEY:-dev-provider-key}
+    PROVIDER_DELAY_MIN: ${PROVIDER_DELAY_MIN:-2}
+    PROVIDER_DELAY_MAX: ${PROVIDER_DELAY_MAX:-5}
+    OUTBOX_POLL_INTERVAL: ${OUTBOX_POLL_INTERVAL:-0.5}
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: payments
+      POSTGRES_PASSWORD: payments
+      POSTGRES_DB: payments
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments -d payments"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    # RabbitMQ выбирает каталог данных по имени узла. Оно должно сохраняться
+    # при пересоздании контейнера, иначе прежний volume выглядит как пустой брокер.
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_NODENAME: rabbit@rabbitmq
+      RABBITMQ_DEFAULT_USER: payments
+      RABBITMQ_DEFAULT_PASS: payments
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  provider:
+    <<: *app
+    command: ["uvicorn", "app.provider:app", "--host", "0.0.0.0", "--port", "8001"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  outbox:
+    <<: *app
+    command: ["python", "-m", "app.outbox"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  consumer:
+    <<: *app
+    command: ["python", "-m", "app.consumer"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      provider:
+        condition: service_started
+
+  webhook-sink:
+    <<: *app
+    command: ["uvicorn", "app.webhook_sink:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "127.0.0.1:8002:8002"
+
+  tests:
+    <<: *app
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    restart: "no"
+    environment:
+      <<: *environment
+      TEST_DATABASE_URL: postgresql+asyncpg://payments:payments@postgres:5432/payments
+      TEST_RABBITMQ_URL: amqp://payments:payments@rabbitmq:5672/
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

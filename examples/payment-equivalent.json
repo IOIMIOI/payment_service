@@ -1,0 +1,14 @@
+{
+  "webhook_url": "http://webhook-sink:8002/webhooks",
+  "metadata": {
+    "tags": ["test", "api"],
+    "customer": {
+      "channel": "web",
+      "id": 42.0
+    },
+    "order_id": "smoke-001"
+  },
+  "description": "Order smoke-001",
+  "currency": "RUB",
+  "amount": 100.0
+}
