@@ -14,7 +14,7 @@ jobs:
       - name: Check style, tests with PostgreSQL and RabbitMQ, and migration drift
         run: >-
           docker compose --profile test run --build --rm tests
-          sh -c "ruff check . && ruff format --check . && pytest -q -p no:cacheprovider && alembic check"
+          sh -c "ruff check --no-cache . && ruff format --no-cache --check . && pytest -q -p no:cacheprovider && alembic check"
       - name: Show service logs after failure
         if: failure()
         run: docker compose logs
