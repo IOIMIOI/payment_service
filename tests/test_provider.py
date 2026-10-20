@@ -7,14 +7,14 @@ import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Base, ProviderOperation
-from app.provider import (
+from app.emulator.provider import (
     Emulator,
-    HTTPProvider,
     ProviderConflictError,
     ProviderTemporaryError,
     create_app,
 )
+from app.infrastructure.http.provider import HTTPProvider
+from app.infrastructure.persistence.models import Base, ProviderOperation
 
 
 @pytest_asyncio.fixture

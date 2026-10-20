@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
 from app.config import settings
-from app.models import Base
+from app.infrastructure.persistence.models import Base
 
 config = context.config
 if config.config_file_name is not None:

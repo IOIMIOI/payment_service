@@ -7,11 +7,15 @@ from faststream import FastStream
 from faststream.exceptions import NackMessage, RejectMessage
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.broker import PAYMENT_QUEUE, QUEUES, WEBHOOK_QUEUE, create_broker, declare_topology
-from app.db import Session, engine
-from app.provider import HTTPProvider
-from app.webhook import HTTPWebhook
-from app.worker import Processor
+from app.bootstrap import create_processor
+from app.infrastructure.messaging.broker import (
+    PAYMENT_QUEUE,
+    QUEUES,
+    WEBHOOK_QUEUE,
+    create_broker,
+    declare_topology,
+)
+from app.infrastructure.persistence.db import engine
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +27,7 @@ class Event(BaseModel):
 
 
 broker = create_broker()
-processor = Processor(Session, engine, HTTPProvider(), HTTPWebhook())
+processor = create_processor()
 app = FastStream(broker)
 
 

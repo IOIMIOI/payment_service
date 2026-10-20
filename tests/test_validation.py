@@ -5,7 +5,8 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import PaymentCreate, canonical_json, decode_json
+from app.entrypoints.api.schemas import PaymentCreate
+from app.shared.json import canonical_json, decode_json
 
 
 def make_request(amount="100.00", **changes):

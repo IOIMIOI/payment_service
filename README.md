@@ -143,8 +143,8 @@ flowchart LR
 Административного HTTP-endpoint нет. Источник состояния для восстановления — `work_items` в БД, а не число сообщений в RabbitMQ.
 
 ```powershell
-docker compose exec api python -m app.recover list
-docker compose exec api python -m app.recover replay EVENT_ID
+docker compose exec api python -m app.entrypoints.recover list
+docker compose exec api python -m app.entrypoints.recover replay EVENT_ID
 docker compose logs -f consumer outbox webhook-sink
 ```
 
@@ -177,9 +177,9 @@ docker compose logs -f outbox consumer
 docker compose stop webhook-sink
 # Создайте новый платёж с новым ключом и прежним URL /webhooks.
 # Дождитесь завершения оплаты и трёх неудачных доставок уведомления.
-docker compose exec api python -m app.recover list
+docker compose exec api python -m app.entrypoints.recover list
 docker compose start webhook-sink
-docker compose exec api python -m app.recover replay EVENT_ID_СО_STAGE_WEBHOOK
+docker compose exec api python -m app.entrypoints.recover replay EVENT_ID_СО_STAGE_WEBHOOK
 docker compose logs webhook-sink
 ```
 
@@ -265,11 +265,11 @@ python -m alembic upgrade head
 В отдельных терминалах с активированным окружением:
 
 ```text
-uvicorn app.api:app --host 0.0.0.0 --port 8000
-uvicorn app.provider:app --host 0.0.0.0 --port 8001
-uvicorn app.webhook_sink:app --host 0.0.0.0 --port 8002
-python -m app.outbox
-python -m app.consumer
+uvicorn app.entrypoints.api.routes:app --host 0.0.0.0 --port 8000
+uvicorn app.emulator.provider:app --host 0.0.0.0 --port 8001
+uvicorn app.emulator.webhook_sink:app --host 0.0.0.0 --port 8002
+python -m app.entrypoints.outbox
+python -m app.entrypoints.consumer
 ```
 
 Для локального consumer в примере платежа используйте `http://localhost:8002/webhooks`. Значения `.env.example` рассчитаны на localhost; Compose сам заменяет адреса PostgreSQL, RabbitMQ и provider именами контейнеров.
@@ -295,18 +295,57 @@ docker compose down
 ## Структура проекта
 
 ```text
-app/api.py           HTTP API и атомарное создание платежа
-app/schemas.py       точный JSON, валидация и канонизация
-app/models.py        четыре таблицы и ограничения
-app/db.py            async sessions и блокировки
-app/worker.py        состояния этапов, попытки, финализация и DLQ
-app/provider.py      HTTP-клиент и независимый эмулятор
-app/webhook.py       POST-адаптер с таймаутом
-app/broker.py        durable топология и publisher confirms
-app/outbox.py        повторяемая публикация
-app/consumer.py      подписки FastStream
-app/recover.py       ручной list/replay
-app/webhook_sink.py  клиентский приёмник для примера
-alembic/             миграции
-tests/               автоматические проверки
+app/domain/                     сущности Payment/WorkItem и правила переходов/повторов
+app/application/payments.py     создание, идемпотентность и получение платежа
+app/application/processor.py    оркестрация этапов оплаты и webhook
+app/application/recovery.py     сценарии list/replay
+app/application/ports.py        контракты репозиториев, UoW, провайдера и webhook
+app/infrastructure/persistence/ ORM, SQL-запросы, блокировки и SQLAlchemy Unit of Work
+app/infrastructure/http/        клиенты провайдера и webhook
+app/infrastructure/messaging/   топология RabbitMQ и диспетчер outbox
+app/entrypoints/api/            HTTP-маршруты, схемы запросов и JSON-ответы
+app/entrypoints/consumer.py     подписки FastStream
+app/entrypoints/outbox.py       запуск диспетчера
+app/entrypoints/recover.py      аргументы и вывод CLI восстановления
+app/emulator/                   сервер провайдера и клиентский webhook-sink
+app/shared/                     точный JSON и функции времени без зависимостей от фреймворков
+app/bootstrap.py                сборка сервисов с конкретными адаптерами
+alembic/                        миграции
+tests/                          проверки домена, сценариев, адаптеров и интеграции
 ```
+
+Зависимости направлены от транспорта к прикладным сценариям, от сценариев — к
+домену и контрактам. `domain`, `application` и `shared` не импортируют FastAPI,
+SQLAlchemy, HTTP-клиенты или конкретные адаптеры. Это проверяет
+`tests/test_architecture.py`. Сборка зависимостей находится в `bootstrap.py`;
+в тестах сценариев используются репозитории в памяти, без БД и брокера.
+
+Роутер преобразует валидированный запрос в `CreatePayment`, вызывает
+`PaymentService` и переводит результат/ошибки в HTTP-коды. Уникальный INSERT,
+поиск по ключу и блокировки скрыты за репозиториями. `SqlAlchemyUnitOfWork`
+открывает одну транзакцию: успешный выход фиксирует изменения, исключение
+откатывает их, сессия всегда закрывается. Ошибки целостности преобразуются в
+`StorageConflict`; конфликт идемпотентности определяется самим сценарием после
+отката и чтения существующего платежа в новой транзакции.
+
+Правила попыток, задержек, окончательного статуса и нового цикла восстановления
+сосредоточены в доменных сущностях. ORM-модели используются только адаптерами
+хранения и независимым эмулятором. Репозитории возвращают доменные объекты;
+изменения сохраняются явно через `save`, без скрытого отслеживания доменных объектов.
+
+### Границы сложности
+
+Рефакторинг сохраняет текущий HTTP-контракт и схему БД. Таблица `work_items`
+нужна для сохранения попыток и независимой доставки webhook; `provider_operations`
+принадлежит эмулятору и сохраняет его результат при потере ответа. CLI восстановления
+изолирован от основной обработки. Точный JSON-кодек вынесен из API-схем в один
+модуль: удаление его меняло бы существующие правила сравнения metadata и точности
+сумм. Эти механизмы не расширяются дополнительными возможностями.
+
+Отдельных базовых CRUD-сервисов, универсального контейнера зависимостей и отдельного
+класса на каждый запрос нет. Порты описывают только используемые операции;
+правила восстановления и маршруты событий определены в одном месте. Упрощение
+здесь касается границ ответственности и дублирования, а не ослабления гарантий.
+
+Результаты CI, приведённые выше и в `TEST_REPORT.md`, относятся к указанным там
+историческим коммитам. Проверки текущих изменений доступны в Actions соответствующего PR.

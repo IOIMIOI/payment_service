@@ -4,11 +4,8 @@ import asyncio
 
 import httpx
 
-from app.schemas import canonical_json
-
-
-class WebhookDeliveryError(Exception):
-    pass
+from app.application.ports import WebhookDeliveryError
+from app.shared.json import canonical_json
 
 
 class HTTPWebhook:

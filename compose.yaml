@@ -62,7 +62,7 @@ services:
 
   api:
     <<: *app
-    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "app.entrypoints.api.routes:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -71,14 +71,14 @@ services:
 
   provider:
     <<: *app
-    command: ["uvicorn", "app.provider:app", "--host", "0.0.0.0", "--port", "8001"]
+    command: ["uvicorn", "app.emulator.provider:app", "--host", "0.0.0.0", "--port", "8001"]
     depends_on:
       migrate:
         condition: service_completed_successfully
 
   outbox:
     <<: *app
-    command: ["python", "-m", "app.outbox"]
+    command: ["python", "-m", "app.entrypoints.outbox"]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -87,7 +87,7 @@ services:
 
   consumer:
     <<: *app
-    command: ["python", "-m", "app.consumer"]
+    command: ["python", "-m", "app.entrypoints.consumer"]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -98,7 +98,7 @@ services:
 
   webhook-sink:
     <<: *app
-    command: ["uvicorn", "app.webhook_sink:app", "--host", "0.0.0.0", "--port", "8002"]
+    command: ["uvicorn", "app.emulator.webhook_sink:app", "--host", "0.0.0.0", "--port", "8002"]
     ports:
       - "127.0.0.1:8002:8002"
 

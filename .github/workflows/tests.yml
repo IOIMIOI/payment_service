@@ -11,8 +11,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify RabbitMQ message persistence across container recreation
         run: python3 scripts/check_rabbitmq_persistence.py
-      - name: Run tests with PostgreSQL and RabbitMQ
-        run: docker compose --profile test run --build --rm tests
+      - name: Check style, tests with PostgreSQL and RabbitMQ, and migration drift
+        run: >-
+          docker compose --profile test run --build --rm tests
+          sh -c "ruff check --no-cache . && ruff format --no-cache --check . && pytest -q -p no:cacheprovider && alembic check"
       - name: Show service logs after failure
         if: failure()
         run: docker compose logs
