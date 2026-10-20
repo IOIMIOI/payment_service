@@ -11,18 +11,14 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Literal
 
-import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 
+from app.application.ports import ProviderTemporaryError
 from app.config import get_settings
-from app.db import Session, engine, event_lock
-from app.models import ProviderOperation, utcnow
-
-
-class ProviderTemporaryError(Exception):
-    """Нет достоверного окончательного ответа; следующий вызов использует тот же ключ."""
+from app.infrastructure.persistence.db import Session, engine, event_lock
+from app.infrastructure.persistence.models import ProviderOperation, utcnow
+from app.infrastructure.persistence.repositories import ProviderOperations
 
 
 class ProviderConflictError(Exception):
@@ -76,9 +72,8 @@ class Emulator:
             async with event_lock(self.engine, "provider:" + key) as acquired:
                 if acquired:
                     async with self.session_factory() as session:
-                        existing = await session.scalar(
-                            select(ProviderOperation).where(ProviderOperation.provider_key == key)
-                        )
+                        operations = ProviderOperations(session)
+                        existing = await operations.get(key)
                         if existing is not None:
                             if existing.request_canonical != canonical:
                                 raise ProviderConflictError(
@@ -98,7 +93,7 @@ class Emulator:
                             status="succeeded" if outcome < 0.90 else "failed",
                             processed_at=utcnow(),
                         )
-                        session.add(operation)
+                        await operations.add(operation)
                         # Провайдер фиксирует результат ДО HTTP-ответа в отдельной
                         # транзакции. Падение consumer после оплаты не стирает этот факт.
                         await session.commit()
@@ -156,47 +151,6 @@ def create_app(emulator: Emulator | None = None, api_key: str | None = None) -> 
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return provider_app
-
-
-class HTTPProvider:
-    def __init__(
-        self,
-        url: str | None = None,
-        api_key: str | None = None,
-        *,
-        client: httpx.AsyncClient | None = None,
-        timeout: float = 15.0,
-    ) -> None:
-        settings = get_settings()
-        self.url = (url if url is not None else settings.provider_url).rstrip("/")
-        self.api_key = api_key if api_key is not None else settings.provider_api_key
-        self.client = client
-        self.timeout = timeout
-
-    async def charge(self, key: str, amount: str, currency: str) -> dict[str, str]:
-        async def send(client: httpx.AsyncClient) -> dict[str, str]:
-            response = await client.post(
-                self.url + "/charge",
-                headers={"X-API-Key": self.api_key, "Idempotency-Key": key},
-                json={"amount": amount, "currency": currency},
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data = ChargeResponse.model_validate(response.json())
-            if data.processed_at.tzinfo is None:
-                raise ValueError("provider processed_at must have a timezone")
-            return {"status": data.status, "processed_at": data.processed_at.isoformat()}
-
-        try:
-            # Потеря HTTP-ответа не доказывает отсутствие оплаты. Любая ошибка
-            # транспорта повторяется с тем же ключом, а не помечает платёж failed.
-            async with asyncio.timeout(self.timeout):
-                if self.client is not None:
-                    return await send(self.client)
-                async with httpx.AsyncClient() as client:
-                    return await send(client)
-        except (httpx.HTTPError, ValueError, TimeoutError) as exc:
-            raise ProviderTemporaryError(f"provider response unavailable: {exc}") from exc
 
 
 app = create_app()

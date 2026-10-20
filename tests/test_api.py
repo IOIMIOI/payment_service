@@ -2,25 +2,28 @@
 
 import asyncio
 from decimal import Decimal
+from functools import partial
 
 import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import event, func, select
 
-from app.api import app, get_session
+from app.application.payments import PaymentService
+from app.bootstrap import get_payment_service
 from app.config import settings
-from app.models import Outbox, Payment, WorkItem, utcnow
-from app.schemas import decode_json
+from app.entrypoints.api.routes import app
+from app.infrastructure.persistence.models import Outbox, Payment, WorkItem, utcnow
+from app.infrastructure.persistence.uow import SqlAlchemyUnitOfWork
+from app.shared.json import decode_json
 
 
 @pytest_asyncio.fixture
 async def api_client(session_factory):
-    async def sessions():
-        async with session_factory() as session:
-            yield session
+    def service():
+        return PaymentService(partial(SqlAlchemyUnitOfWork, session_factory))
 
-    app.dependency_overrides[get_session] = sessions
+    app.dependency_overrides[get_payment_service] = service
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),

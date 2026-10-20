@@ -6,8 +6,8 @@ import pytest
 from faststream.exceptions import NackMessage, RejectMessage
 from faststream.rabbit import TestRabbitBroker as RabbitTestBroker
 
-from app import consumer
-from app.broker import PAYMENT_QUEUE, QUEUES, WEBHOOK_QUEUE
+from app.entrypoints import consumer
+from app.infrastructure.messaging.broker import PAYMENT_QUEUE, QUEUES, WEBHOOK_QUEUE
 
 
 @pytest.mark.parametrize("queue_name", [PAYMENT_QUEUE, WEBHOOK_QUEUE])

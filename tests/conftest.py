@@ -2,8 +2,8 @@ import pytest_asyncio
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Base
-from app.schemas import canonical_json, decode_json
+from app.infrastructure.persistence.models import Base
+from app.shared.json import canonical_json, decode_json
 
 
 @pytest_asyncio.fixture

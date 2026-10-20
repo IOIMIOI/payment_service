@@ -1,4 +1,5 @@
 from decimal import Decimal
+from functools import partial
 from uuid import uuid4
 
 import pytest
@@ -6,8 +7,9 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Base, Outbox, Payment, WorkItem, utcnow
-from app.recover import list_dead, replay
+from app.application.recovery import list_dead, replay
+from app.infrastructure.persistence.models import Base, Outbox, Payment, WorkItem, utcnow
+from app.infrastructure.persistence.uow import SqlAlchemyUnitOfWork
 
 
 @pytest_asyncio.fixture
@@ -68,7 +70,7 @@ async def test_manual_recovery_starts_bounded_cycle_preserving_identity(
     recovery_db, kind, destination
 ):
     payment_id, event_id, payload = await seed_dead(recovery_db, kind)
-    dead = await list_dead(recovery_db)
+    dead = await list_dead(partial(SqlAlchemyUnitOfWork, recovery_db))
     assert dead == [
         {
             "event_id": event_id,
@@ -80,9 +82,9 @@ async def test_manual_recovery_starts_bounded_cycle_preserving_identity(
         }
     ]
 
-    result = await replay(event_id, recovery_db)
+    result = await replay(event_id, partial(SqlAlchemyUnitOfWork, recovery_db))
     assert result == {"event_id": event_id, "stage": kind, "cycle": 1}
-    assert await list_dead(recovery_db) == []
+    assert await list_dead(partial(SqlAlchemyUnitOfWork, recovery_db)) == []
     async with recovery_db() as session:
         item = await session.get(WorkItem, event_id)
         assert item.payload == payload
@@ -101,9 +103,9 @@ async def test_manual_recovery_starts_bounded_cycle_preserving_identity(
 async def test_recovery_requires_existing_dead_event(recovery_db):
     _, event_id, _ = await seed_dead(recovery_db, "webhook")
     with pytest.raises(ValueError, match="не найдено"):
-        await replay(str(uuid4()), recovery_db)
-    await replay(event_id, recovery_db)
+        await replay(str(uuid4()), partial(SqlAlchemyUnitOfWork, recovery_db))
+    await replay(event_id, partial(SqlAlchemyUnitOfWork, recovery_db))
     with pytest.raises(ValueError, match="только dead"):
-        await replay(event_id, recovery_db)
+        await replay(event_id, partial(SqlAlchemyUnitOfWork, recovery_db))
     async with recovery_db() as session:
         assert len((await session.scalars(select(Outbox))).all()) == 1

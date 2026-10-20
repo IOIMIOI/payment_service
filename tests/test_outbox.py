@@ -6,8 +6,8 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models import Base, Outbox, Payment, WorkItem
-from app.outbox import publish_once
+from app.infrastructure.messaging.outbox import publish_once
+from app.infrastructure.persistence.models import Base, Outbox, Payment, WorkItem
 
 
 @pytest_asyncio.fixture

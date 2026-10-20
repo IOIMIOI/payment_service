@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+from functools import partial
 from uuid import uuid4
 
 import aio_pika
@@ -18,14 +19,18 @@ from faststream.rabbit import RabbitQueue
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api import app, get_session
-from app.broker import PAYMENT_QUEUE, QUEUES, create_broker
+from app.application.payments import PaymentService
+from app.application.processor import EventBusy, Processor
+from app.bootstrap import get_payment_service
 from app.config import settings
-from app.models import Base, Outbox, Payment, ProviderOperation, WorkItem
-from app.outbox import publish_once
-from app.provider import Emulator
-from app.schemas import canonical_json, decode_json
-from app.worker import EventBusy, Processor
+from app.emulator.provider import Emulator
+from app.entrypoints.api.routes import app
+from app.infrastructure.messaging.broker import PAYMENT_QUEUE, QUEUES, create_broker
+from app.infrastructure.messaging.outbox import publish_once
+from app.infrastructure.persistence.db import event_lock
+from app.infrastructure.persistence.models import Base, Outbox, Payment, ProviderOperation, WorkItem
+from app.infrastructure.persistence.uow import SqlAlchemyUnitOfWork
+from app.shared.json import canonical_json, decode_json
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -75,13 +80,11 @@ async def postgres():
 async def postgres_api(postgres):
     _, factories = postgres
 
-    async def sessions():
-        # Каждый HTTP-запрос открывает отдельную транзакцию/сессию.
-        async with factories[0]() as session:
-            yield session
+    def service():
+        return PaymentService(partial(SqlAlchemyUnitOfWork, factories[0]))
 
     original = dict(app.dependency_overrides)
-    app.dependency_overrides[get_session] = sessions
+    app.dependency_overrides[get_payment_service] = service
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -237,7 +240,12 @@ async def test_postgres_worker_lock_prevents_concurrent_duplicate_charge(postgre
 
     provider = SlowProvider()
     processors = [
-        Processor(factory, engine, provider, NoWebhookAtThisStage())
+        Processor(
+            partial(SqlAlchemyUnitOfWork, factory),
+            partial(event_lock, engine),
+            provider,
+            NoWebhookAtThisStage(),
+        )
         for engine, factory in zip(engines, factories, strict=True)
     ]
     first = asyncio.create_task(processors[0].handle(event_id, 0))

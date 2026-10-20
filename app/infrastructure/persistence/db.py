@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from app.config import settings
-from app.schemas import canonical_json, decode_json
+from app.shared.json import canonical_json, decode_json
 
 engine = create_async_engine(
     settings.database_url,

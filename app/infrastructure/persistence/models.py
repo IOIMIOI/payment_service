@@ -1,6 +1,6 @@
 """Общие таблицы сервиса и независимого эмулятора провайдера."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -18,9 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+from app.shared.time import utcnow
 
 
 class Base(DeclarativeBase):

@@ -2,16 +2,19 @@ import asyncio
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from functools import partial
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import event, func, select
 
-from app.models import Outbox, Payment, ProviderOperation, WorkItem
-from app.provider import Emulator, ProviderTemporaryError
-from app.recover import replay
-from app.webhook import WebhookDeliveryError
-from app.worker import EventBusy, Processor
+from app.application.processor import EventBusy, Processor
+from app.application.recovery import replay
+from app.emulator.provider import Emulator, ProviderTemporaryError
+from app.infrastructure.http.webhook import WebhookDeliveryError
+from app.infrastructure.persistence.db import event_lock
+from app.infrastructure.persistence.models import Outbox, Payment, ProviderOperation, WorkItem
+from app.infrastructure.persistence.uow import SqlAlchemyUnitOfWork
 
 
 class Clock:
@@ -97,8 +100,8 @@ async def webhook_event(sessions, payment_id):
 def processor(sessions, engine, provider=None, webhook=None, clock=None):
     clock = clock or Clock()
     return Processor(
-        sessions,
-        engine,
+        partial(SqlAlchemyUnitOfWork, sessions),
+        partial(event_lock, engine),
         provider or Provider(),
         webhook or Webhook(),
         sleep=clock.sleep,
@@ -189,7 +192,7 @@ async def test_webhook_exhaustion_preserves_payment_and_payload(session_factory,
             == 1
         )
 
-    await replay(notification.event_id, session_factory)
+    await replay(notification.event_id, partial(SqlAlchemyUnitOfWork, session_factory))
     await worker.handle(notification.event_id, 0)  # старое сообщение не тратит новый цикл
     assert len(webhook.calls) == 3
     await worker.handle(notification.event_id, 1)
@@ -204,7 +207,7 @@ async def test_manual_payment_replay_new_bounded_cycle_same_identity(session_fac
     worker = processor(session_factory, engine, provider)
     await worker.handle(event_id, 0)
     original = await read(session_factory, WorkItem, event_id)
-    await replay(event_id, session_factory)
+    await replay(event_id, partial(SqlAlchemyUnitOfWork, session_factory))
     await worker.handle(event_id, 0)
     assert len(provider.calls) == 3
     await worker.handle(event_id, 1)
@@ -299,7 +302,7 @@ async def test_uncertain_third_call_goes_dlq_then_manual_lookup(
     assert (await read(session_factory, WorkItem, event_id)).state == "dead"
     assert (await read(session_factory, Payment, payment_id)).status == "pending"
     assert len(operations) == 1
-    await replay(event_id, session_factory)
+    await replay(event_id, partial(SqlAlchemyUnitOfWork, session_factory))
     await worker.handle(event_id, 1)
     assert (await read(session_factory, Payment, payment_id)).status == "succeeded"
     assert len(operations) == 1

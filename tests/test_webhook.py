@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from app.webhook import HTTPWebhook, WebhookDeliveryError
+from app.infrastructure.http.webhook import HTTPWebhook, WebhookDeliveryError
 
 pytestmark = pytest.mark.asyncio
 
